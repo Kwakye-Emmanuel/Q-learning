@@ -1,0 +1,76 @@
+import numpy as np
+from scipy.special import erfc
+
+class WillieDetector:
+    def __init__(self, system_model):
+        """Initialize Willie's detector using analytical DEP calculation."""
+        self.system = system_model
+
+    def compute_gamma_opt(self, K):
+        """Compute the optimal detection threshold γ* (Equation 31)."""
+        return K * self.system.Pmax + self.system.sigma_w**2
+
+    def compute_sigma_R(self, K):
+        """Compute Σ_R using the group correlation model (Equation 32)."""
+        return (K + (K - 1) * K * self.system.rho) * self.system.Pmax**2
+
+    def compute_zeta_min(self, Pa, P_users):
+        """Compute the analytical minimum DEP ζ_min (Equation 33)."""
+
+        # Ensure P_users is a NumPy array to avoid indexing errors
+        P_users = np.asarray(P_users)
+
+        # Number of cooperative users K (users with P > 0)
+        K = np.count_nonzero(P_users)
+
+        # Compute Σ_R
+        Σ_R = self.compute_sigma_R(K)
+
+        # Edge Case Handling: If Alice's power is zero, DEP = 1
+        if Pa < 1e-6:
+            return 1.0
+
+        # Compute terms from Equation (33)
+        term1 = np.sqrt(Σ_R / (2 * Pa**2))
+        term2 = np.sqrt(Σ_R / (2 * Pa**2) + 4 / np.pi)
+
+        # Compute DEP (ζ_min)
+        zeta_min = 1 - (1 / (np.sqrt(np.pi) * (term1 + term2)))
+
+        # Ensure output is scalar (prevent array conversion errors)
+        if isinstance(zeta_min, np.ndarray):
+            zeta_min = zeta_min.item()
+
+        return zeta_min
+
+    def check_covert_constraint(self, Pa, P_users, epsilon):
+        """
+        Compute minimum DEP (ζ_min) and check if it satisfies the covert constraint.
+
+        Returns:
+            (bool) Whether the covert constraint ζ_min ≥ 1 - ε is satisfied
+            (float) ζ_min
+        """
+        zeta_min = self.compute_zeta_min(Pa, P_users)
+        constraint_satisfied = zeta_min >= 1 - epsilon  # Correct covert constraint
+
+        print(f"[DEBUG] DEP Validation - ζ_min: {zeta_min:.6f}, Target: {1 - epsilon:.6f}, Constraint Satisfied: {constraint_satisfied}")
+
+        return constraint_satisfied, zeta_min
+
+    def check_cooperative_users_constraint(self, Pa, K, epsilon):
+        """
+        Verify if the cooperative user constraint (Equation 35) is satisfied.
+
+        Returns:
+            (bool) Whether K meets the minimum required number
+        """
+        # Compute c_epsilon from Equation (35)
+        c_epsilon = (1 / epsilon**2 - 8 + 16 * epsilon**2) / (2 * np.pi)
+
+        # Check if the cooperative user constraint holds
+        constraint_satisfied = (K + (K - 1) * K * self.system.rho) >= (Pa**2 / self.system.Pmax**2) * c_epsilon
+
+        print(f"[DEBUG] Cooperative User Constraint - K: {K}, Required LHS: {(K + (K - 1) * K * self.system.rho):.6f}, RHS: {(Pa**2 / self.system.Pmax**2) * c_epsilon:.6f}, Satisfied: {constraint_satisfied}")
+
+        return constraint_satisfied

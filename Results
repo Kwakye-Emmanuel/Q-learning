@@ -1,0 +1,85 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define range for epsilon values
+epsilon_values = [0.1, 0.05, 0.01]  # Corresponds to 1 - ε values in the plot
+
+# Store results for plotting
+throughput_values = []
+power_values = []
+rate_values = []
+
+for epsilon in epsilon_values:
+    print(f"\n==== Training Q-learning for ε = {epsilon} (1 - ε = {1 - epsilon}) ====")
+
+    # Initialize system model
+    system_model = SystemModel(
+        M=200,       # Number of users
+        N=100000,    # Length of the codeword
+        rho=0,       # Channel correlation coefficient (independent channels)
+        Pmax=1.0,    # Maximum transmit power
+        sigma_b=1.0, # Noise variance at Bob
+        sigma_w=1.0  # Noise variance at Willie
+    )
+
+    # Initialize Willie's detector
+    willie_detector = WillieDetector(system_model)
+
+    # Initialize Covert Optimization with covertness constraint ε
+    covert_optimizer = CovertOptimization(system_model, willie_detector, epsilon)
+
+    # Initialize Q-learning agent
+    q_learning_agent = QLearningAgent(system_model, covert_optimizer)
+
+    # Train the agent for ONE episode
+    optimal_policy = q_learning_agent.train()
+
+    # Extract optimal values
+    R_star, Pa_star, K_star = optimal_policy
+
+    # Compute optimal throughput η*
+    optimal_throughput = covert_optimizer.calculate_throughput(R_star, Pa_star, K_star)
+
+    # Store results for plotting
+    throughput_values.append(optimal_throughput)
+    power_values.append(Pa_star)
+    rate_values.append(R_star)
+
+    # Print the optimal state and throughput
+    print(f"Optimal Covert Rate (R*): {R_star:.4f}")
+    print(f"Optimal Transmit Power (Pa*): {Pa_star:.4f}")
+    print(f"Optimal Number of Cooperative Users (K*): {K_star}")
+    print(f"Optimal Throughput (η*): {optimal_throughput:.4f}")
+
+# Convert 1 - ε values for plotting
+x_values = [1 - eps for eps in epsilon_values]
+
+# Plot the results
+plt.figure(figsize=(12, 4))
+
+# Throughput plot
+plt.subplot(1, 3, 1)
+plt.plot(x_values, throughput_values, marker='o', linestyle='-', label="Q-learning")
+plt.xlabel("$1 - \epsilon$")
+plt.ylabel("$\eta^*$ (Throughput)")
+plt.title("Optimal Throughput")
+plt.grid()
+
+# Transmit Power plot
+plt.subplot(1, 3, 2)
+plt.plot(x_values, power_values, marker='o', linestyle='-', label="Q-learning")
+plt.xlabel("$1 - \epsilon$")
+plt.ylabel("$P_a^*$ (Transmit Power)")
+plt.title("Optimal Transmit Power")
+plt.grid()
+
+# Covert Rate plot
+plt.subplot(1, 3, 3)
+plt.plot(x_values, rate_values, marker='o', linestyle='-', label="Q-learning")
+plt.xlabel("$1 - \epsilon$")
+plt.ylabel("$R^*$ (Covert Rate)")
+plt.title("Optimal Covert Rate")
+plt.grid()
+
+plt.tight_layout()
+plt.show()

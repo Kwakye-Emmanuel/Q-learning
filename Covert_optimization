@@ -1,0 +1,51 @@
+import numpy as np
+from scipy.special import erfc
+
+class CovertOptimization:
+    def __init__(self, system_model, willie_detector, epsilon):
+        self.system = system_model
+        self.detector = willie_detector
+        self.epsilon = epsilon  # Covert constraint parameter
+
+    def calculate_outage_probability(self, R, Pa, K):
+        """Compute outage probability P_o using Shannon capacity."""
+        signal_power = Pa * np.abs(self.system.h_bob[0]) ** 2
+        channel_gains = np.abs(self.system.h_bob[1:]) ** 2
+        sorted_indices = np.argsort(channel_gains)
+        selected_gains = channel_gains[sorted_indices[:K]]
+        interference = np.sum(self.system.Pmax * selected_gains) + self.system.sigma_b**2
+        capacity = np.log2(1 + signal_power / interference)
+        return float(capacity < R)
+
+    def calculate_throughput(self, R, Pa, K):
+        """Compute throughput η based on connection probability P_c."""
+        Po = self.calculate_outage_probability(R, Pa, K)
+        return R * (1 - Po)
+
+    def check_constraints(self, R, Pa, K):
+        """Ensure covertness constraint ζ_min ≥ 1 - ε and enforce on-off power scheme."""
+        if Pa < 0 or Pa > self.system.Pmax:
+            return False, K
+
+        channel_gains = np.abs(self.system.h_willie[1:]) ** 2
+        sorted_indices = np.argsort(channel_gains)
+        selected_gains = channel_gains[sorted_indices[:K]]
+
+        # Enforce On-Off Power Allocation
+        power_allocation = np.zeros(self.system.M)
+        threshold = np.sort(channel_gains)[K-1]
+        power_allocation[channel_gains <= threshold] = self.system.Pmax
+
+        # Compute DEP using proper constraint
+        constraint_satisfied, zeta_min = self.detector.check_covert_constraint(Pa, power_allocation, self.epsilon)
+
+        return constraint_satisfied, K
+
+    def select_optimal_K(self, Pa):
+        """Select K* using Equation (35) instead of iterating dynamically."""
+        c_epsilon = (1/self.epsilon**2 - 8 + 16*self.epsilon**2) / (2 * np.pi)
+        K_opt = (Pa**2 / (self.system.Pmax**2 * c_epsilon) - 1) / (1 + self.system.rho)
+
+        # Ensure K is an integer and within valid range
+        K_opt = max(1, min(self.system.M, int(np.ceil(K_opt))))
+        return K_opt

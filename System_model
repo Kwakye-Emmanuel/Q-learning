@@ -1,0 +1,154 @@
+import numpy as np
+from scipy.stats import multivariate_normal
+
+class SystemModel:
+    def __init__(self, M, N, rho, K=None, Pmax=1.0, sigma_b=1.0, sigma_w=1.0, lambda_b=1.0, lambda_w=1.0):
+        """
+        Initialize system model parameters
+
+        Args:
+            M (int): Number of non-covert users
+            K (int): Number of cooperative users
+            N (int): Codeword length
+            rho (float): Channel correlation coefficient
+            Pmax (float): Maximum transmit power
+            sigma_b (float): Noise variance at Bob
+            sigma_w (float): Noise variance at Willie
+            lambda_b (float): Channel variance to Bob
+            lambda_w (float): Channel variance to Willie
+        """
+        # System parameters
+        self.M = M  # Number of non-covert users
+        self.K = K  # Number of cooperative users
+        self.N = N  # Codeword length
+        self.rho = rho  # Channel correlation coefficient
+
+        # Power and noise parameters
+        self.Pmax = Pmax  # Maximum transmit power
+        self.sigma_b = sigma_b  # Noise variance at Bob
+        self.sigma_w = sigma_w  # Noise variance at Willie
+        self.lambda_b = lambda_b  # Channel variance to Bob
+        self.lambda_w = lambda_w  # Channel variance to Willie
+
+        # Initialize channels
+        self.initialize_channels()
+
+    def generate_correlation_matrix(self, size):
+        """
+        Generate correlation matrix R based on the cluster model
+
+        Args:
+            size (int): Size of correlation matrix
+
+        Returns:
+            numpy.ndarray: Correlation matrix
+        """
+        R = np.full((size, size), self.rho)  # Fill matrix with correlation coefficient
+        np.fill_diagonal(R, 1.0)  # Set diagonal to 1 (full correlation)
+        return R
+
+    def generate_correlated_channels(self, R, variance):
+        """
+        Generate correlated Rayleigh fading channels
+
+        Args:
+            R (numpy.ndarray): Correlation matrix
+            variance (float): Channel variance
+
+        Returns:
+            numpy.ndarray: Complex channel coefficients
+        """
+        size = R.shape[0]
+        mean = np.zeros(size)
+
+        # Generate real and imaginary components with correlation
+        real_part = multivariate_normal.rvs(mean, R * variance / 2)
+        imag_part = multivariate_normal.rvs(mean, R * variance / 2)
+
+        return real_part + 1j * imag_part  # Combine into complex values
+
+    def initialize_channels(self):
+        """Initialize all channel coefficients with correlation model"""
+        R_size = self.M + 1  # M users + Alice
+        R = self.generate_correlation_matrix(R_size)
+
+        # Generate channels to Bob and normalize Alice's channel
+        self.h_bob = self.generate_correlated_channels(R, self.lambda_b)
+        self.h_bob[0] /= np.sqrt(np.mean(np.abs(self.h_bob[0])**2))  # Normalization
+        print(f"Debug: Normalized |h_a,b|^2 = {np.abs(self.h_bob[0])**2}")  # Debugging print
+
+        # Generate channels to Willie
+        self.h_willie = self.generate_correlated_channels(R, self.lambda_w)
+
+    def get_received_signal_bob(self, x_alice, x_users, Pa, P_users, hypothesis):
+        """
+        Calculate received signal at Bob under hypotheses H0 and H1
+
+        Args:
+            x_alice: Alice's signal
+            x_users: Users' signals
+            Pa: Alice's power
+            P_users: Users' powers
+            hypothesis: 'H0' or 'H1' indicating whether Alice is transmitting
+
+        Returns:
+            numpy.ndarray: Received signal at Bob
+        """
+        noise_bob = np.random.normal(0, self.sigma_b, self.N) + \
+                   1j * np.random.normal(0, self.sigma_b, self.N)
+
+        if hypothesis == 'H0':
+            # Only cooperative users' signals
+            signal = np.sum([np.sqrt(P_users[m]) * self.h_bob[m+1] * x_users[m] for m in range(self.M)], axis=0)
+        else:
+            # Alice + cooperative users' signals
+            signal = np.sqrt(Pa) * self.h_bob[0] * x_alice
+            signal += np.sum([np.sqrt(P_users[m]) * self.h_bob[m+1] * x_users[m] for m in range(self.M)], axis=0)
+
+        return signal + noise_bob
+
+    def get_received_signal_willie(self, x_alice, x_users, Pa, P_users, hypothesis):
+        """
+        Calculate received signal at Willie under hypotheses H0 and H1
+
+        Args:
+            x_alice: Alice's signal
+            x_users: Users' signals
+            Pa: Alice's power
+            P_users: Users' powers
+            hypothesis: 'H0' or 'H1' indicating whether Alice is transmitting
+
+        Returns:
+            numpy.ndarray: Received signal at Willie
+        """
+        noise_willie = np.random.normal(0, self.sigma_w, self.N) + \
+                      1j * np.random.normal(0, self.sigma_w, self.N)
+
+        if hypothesis == 'H0':
+            # Only cooperative users' signals
+            signal = np.sum([np.sqrt(P_users[m]) * self.h_willie[m+1] * x_users[m] for m in range(self.M)], axis=0)
+        else:
+            # Alice + cooperative users' signals
+            signal = np.sqrt(Pa) * self.h_willie[0] * x_alice
+            signal += np.sum([np.sqrt(P_users[m]) * self.h_willie[m+1] * x_users[m] for m in range(self.M)], axis=0)
+
+        return signal + noise_willie
+
+# # Example Test
+# if __name__ == "__main__":
+#     # System Model Test
+#     system = SystemModel(M=200, N=1000, rho=0.5)
+
+#     # Generate random signals for Alice and users
+#     x_alice = np.random.randn(1000) + 1j * np.random.randn(1000)
+#     x_users = [np.random.randn(1000) + 1j * np.random.randn(1000) for _ in range(system.M)]
+
+#     Pa = 1.0  # Alice's power
+#     P_users = np.random.uniform(0, 1, system.M)  # Random user power allocation
+
+#     # Get received signals at Bob and Willie
+#     y_bob = system.get_received_signal_bob(x_alice, x_users, Pa, P_users, hypothesis='H1')
+#     z_willie = system.get_received_signal_willie(x_alice, x_users, Pa, P_users, hypothesis='H1')
+
+#     print(f"Received Signal at Bob (first 5 samples): {y_bob[:5]}")
+#     print(f"Received Signal at Willie (first 5 samples): {z_willie[:5]}")

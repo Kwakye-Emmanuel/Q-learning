@@ -1,0 +1,118 @@
+import numpy as np
+from itertools import product
+
+class QLearningAgent:
+    def __init__(self, system_model, covert_optimization, L=125, p_A=0.2, Ng=300, gamma=0.95, alpha=0.1):
+        """
+        Q-learning agent for optimizing covert communication.
+
+        Args:
+            system_model: System model instance
+            covert_optimization: Covert optimization instance
+            L: Number of discrete levels for each parameter
+            p_A: Exploration probability
+            Ng: Number of games (fixed number)
+            gamma: Discount factor γ
+            alpha: Learning rate α
+        """
+        self.system = system_model
+        self.optimizer = covert_optimization
+
+        # Q-learning parameters
+        self.L = L
+        self.p_A = p_A
+        self.Ng = Ng
+        self.gamma = gamma
+        self.alpha = alpha
+
+        # Define discrete state space (Equation 16)
+        self.R_levels = np.linspace(0, 5, L)  # Covert rate range [0,5]
+        self.Pa_levels = np.linspace(0, self.system.Pmax, L)  # Transmit power range [0, Pmax]
+        self.K_levels = np.arange(1, L+1)  # K range [1, L]
+
+        # Define discrete action space (-1, 0, 1 for each parameter)
+        self.actions = list(product([-1, 0, 1], repeat=3))  # 3^3 = 27 actions
+
+        # Initialize Q-table with zero values
+        self.Q_table = np.zeros((L, L, L, len(self.actions)))
+
+    def get_state_index(self, state):
+        """Convert continuous state to discrete indices for Q-table lookup."""
+        R_idx = np.clip(np.digitize(state[0], self.R_levels) - 1, 0, self.L-1)
+        Pa_idx = np.clip(np.digitize(state[1], self.Pa_levels) - 1, 0, self.L-1)
+        K_idx = np.clip(np.digitize(state[2], self.K_levels) - 1, 0, self.L-1)
+        return (R_idx, Pa_idx, K_idx)
+
+    def get_next_state(self, state, action):
+        """Apply action to get next state based on transition function."""
+        R, Pa, K = state
+        dR, dPa, dK = action
+
+        next_R = np.clip(R + dR * (5.0 / self.L), 0, 5)
+        next_Pa = np.clip(Pa + dPa * (self.system.Pmax / self.L), 0, self.system.Pmax)
+        next_K = np.clip(K + dK, 1, self.L)
+
+        return (next_R, next_Pa, next_K)
+
+    def select_action(self, state_idx):
+        """
+        Select action based on Q-learning strategy:
+        - Exploit (greedy) with probability 1 - p_A
+        - Explore (random) with probability p_A
+        """
+        if np.random.random() < self.p_A:
+            return np.random.randint(len(self.actions))
+        else:
+            return np.random.choice(np.flatnonzero(self.Q_table[state_idx] == np.max(self.Q_table[state_idx])))
+
+    def update_q_value(self, state_idx, action_idx, reward, next_state_idx):
+        """Update Q-value according to Equation (13)."""
+        current_q = self.Q_table[state_idx][action_idx]
+        next_max_q = np.max(self.Q_table[next_state_idx])
+
+        self.Q_table[state_idx][action_idx] = ((1 - self.alpha) * current_q +
+                                              self.alpha * (reward + self.gamma * next_max_q))
+
+    def train(self):
+        """
+        Train Q-learning agent over Ng games with fixed iterations.
+        """
+        print("Starting Q-learning training...")
+
+        for game in range(self.Ng):  # Fixed number of games (No early stopping)
+            # Start from a random initial state
+            state = (np.random.choice(self.R_levels),
+                     np.random.choice(self.Pa_levels),
+                     np.random.choice(self.K_levels))
+            state_idx = self.get_state_index(state)
+
+            action_idx = self.select_action(state_idx)
+            action = self.actions[action_idx]
+
+            next_state = self.get_next_state(state, action)
+            next_state_idx = self.get_state_index(next_state)
+
+            # Compute throughput and check covert constraints (Equation 10)
+            throughput = self.optimizer.calculate_throughput(next_state[0], next_state[1], next_state[2])
+            constraints_satisfied, _ = self.optimizer.check_constraints(next_state[0], next_state[1], next_state[2])
+
+            # Assign reward based on covert constraint satisfaction
+            reward = throughput if constraints_satisfied else 0
+
+            # Update Q-table
+            self.update_q_value(state_idx, action_idx, reward, next_state_idx)
+
+            # Print progress every 10 games
+            if game % 10 == 0:
+                print(f"Game {game + 1}/{self.Ng}, Reward: {reward:.6f}")
+
+        print("Q-learning training completed.")
+        return self.get_optimal_policy()
+
+    def get_optimal_policy(self):
+        """Find optimal state {R*, Pa*, K*} ∈ S* from the trained Q-table."""
+        max_q_idx = np.unravel_index(np.argmax(self.Q_table), self.Q_table.shape)
+        R_star = self.R_levels[max_q_idx[0]]
+        Pa_star = self.Pa_levels[max_q_idx[1]]
+        K_star = self.K_levels[max_q_idx[2]]
+        return R_star, Pa_star, K_star
